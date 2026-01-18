@@ -22,9 +22,11 @@ jobs:
         include:
           - version: "mono-6.14.1"
             tag: >
+              soupbowl/wine-mono:latest,
               soupbowl/wine-mono:6,
               soupbowl/wine-mono:6.14,
               soupbowl/wine-mono:6.14.1,
+              ghcr.io/${{ github.repository }}:latest,
               ghcr.io/${{ github.repository }}:6,
               ghcr.io/${{ github.repository }}:6.14,
               ghcr.io/${{ github.repository }}:6.14.1,
@@ -70,3 +72,4 @@ jobs:
             MONO_VERSION=${{ matrix.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
