@@ -55,21 +55,19 @@ jobs:
           # Initialize the notified releases file if it doesn't exist
           if [ ! -f "$NOTIFIED_FILE" ]; then
             touch "$NOTIFIED_FILE"
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add "$NOTIFIED_FILE"
-            git commit -m "Initialize notified releases tracker" || true
           fi
           
           # Configure git for potential commits
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          NEW_RELEASES_FOUND=false
+          # Parse the RSS feed and collect new releases
+          # Using a temporary file to avoid subshell variable issues
+          TEMP_RELEASES=$(mktemp)
           
           # Parse the RSS feed to extract release information
           # Convert to single line per entry for easier parsing
-          echo "$RSS_CONTENT" | tr '\n' ' ' | sed 's/<entry>/\n<entry>/g' | grep '<entry>' | head -10 | while IFS= read -r entry; do
+          while IFS= read -r entry; do
             # Extract title (version)
             TITLE=$(echo "$entry" | sed -n 's/.*<title>\([^<]*\)<\/title>.*/\1/p')
             # Extract link (URL)
@@ -90,33 +88,40 @@ jobs:
             fi
             
             echo "New release detected: $TITLE"
-            NEW_RELEASES_FOUND=true
             
-            # Prepare issue title and body by replacing placeholders
-            ISSUE_TITLE="${ISSUE_TITLE_TEMPLATE//\{version\}/$TITLE}"
-            ISSUE_BODY="${ISSUE_BODY_TEMPLATE//\{version\}/$TITLE}"
-            ISSUE_BODY="${ISSUE_BODY//\{date\}/$DATE}"
-            ISSUE_BODY="${ISSUE_BODY//\{url\}/$LINK}"
-            
-            # Create GitHub issue
-            echo "Creating issue for release: $TITLE"
-            gh issue create \
-              --title "$ISSUE_TITLE" \
-              --body "$ISSUE_BODY" \
-              --label "$ISSUE_LABELS"
-            
-            # Add release to notified list
-            echo "$TITLE" >> "$NOTIFIED_FILE"
-            
-            # Commit the updated notified releases file
-            git add "$NOTIFIED_FILE"
-            git commit -m "Track notified release: $TITLE"
-          done
+            # Save new release information to temp file
+            echo "$TITLE|$LINK|$DATE" >> "$TEMP_RELEASES"
+          done < <(echo "$RSS_CONTENT" | tr '\n' ' ' | sed 's/<entry>/\n<entry>/g' | grep '<entry>' | head -10)
           
-          # Push changes if there are any
-          if [ "$(git rev-list HEAD@{1}..HEAD --count 2>/dev/null || echo 0)" -gt 0 ] 2>/dev/null; then
+          # Process new releases from temp file
+          if [ -s "$TEMP_RELEASES" ]; then
+            while IFS='|' read -r TITLE LINK DATE; do
+              # Prepare issue title and body by replacing placeholders
+              ISSUE_TITLE="${ISSUE_TITLE_TEMPLATE//\{version\}/$TITLE}"
+              ISSUE_BODY="${ISSUE_BODY_TEMPLATE//\{version\}/$TITLE}"
+              ISSUE_BODY="${ISSUE_BODY//\{date\}/$DATE}"
+              ISSUE_BODY="${ISSUE_BODY//\{url\}/$LINK}"
+              
+              # Create GitHub issue
+              echo "Creating issue for release: $TITLE"
+              gh issue create \
+                --title "$ISSUE_TITLE" \
+                --body "$ISSUE_BODY" \
+                --label "$ISSUE_LABELS"
+              
+              # Add release to notified list
+              echo "$TITLE" >> "$NOTIFIED_FILE"
+            done < "$TEMP_RELEASES"
+            
+            # Commit and push the updated notified releases file
+            git add "$NOTIFIED_FILE"
+            git commit -m "Track notified releases: $(wc -l < "$TEMP_RELEASES") new release(s)"
             git push
-            echo "Successfully notified new releases and updated tracker"
+            
+            echo "Successfully notified $(wc -l < "$TEMP_RELEASES") new release(s) and updated tracker"
           else
             echo "No new releases to notify"
           fi
+          
+          # Cleanup
+          rm -f "$TEMP_RELEASES"
