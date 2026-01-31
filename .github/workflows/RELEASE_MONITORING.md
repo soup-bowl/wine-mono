@@ -59,7 +59,9 @@ Edit the `ISSUE_LABELS` environment variable with comma-separated label names:
 ISSUE_LABELS: "enhancement,upstream-release"
 ```
 
-**Note**: Labels must already exist in your repository. Create them via Repository Settings → Labels if needed.
+**Note**: Labels must already exist in your repository. You can:
+- Create them manually via Repository Settings → Labels
+- Run the setup script: `.github/scripts/setup-labels.sh` (requires `gh` CLI authentication)
 
 ## Manual Execution
 
