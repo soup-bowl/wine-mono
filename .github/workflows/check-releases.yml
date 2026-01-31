@@ -1,0 +1,122 @@
+name: Check for New Mono Releases
+
+on:
+  schedule:
+    # Run every Monday at 9:00 AM UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  check-releases:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Check for New Releases
+        id: check-releases
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RSS_FEED_URL: "https://gitlab.winehq.org/mono/mono/-/releases.atom"
+          # Configuration: Customize the issue message template
+          ISSUE_TITLE_TEMPLATE: "New Mono Release: {version}"
+          ISSUE_BODY_TEMPLATE: |
+            A new release of Mono has been detected from the WineHQ GitLab repository.
+            
+            **Release Version:** {version}
+            **Release Date:** {date}
+            **Release URL:** {url}
+            
+            Please review and consider updating the Dockerfile to support this new version.
+          # Configuration: Customize issue labels (comma-separated)
+          ISSUE_LABELS: "enhancement,upstream-release"
+        run: |
+          #!/bin/bash
+          set -e
+          
+          echo "Fetching RSS feed from: $RSS_FEED_URL"
+          
+          # Fetch the RSS feed
+          RSS_CONTENT=$(curl -sL "$RSS_FEED_URL")
+          
+          if [ -z "$RSS_CONTENT" ]; then
+            echo "Error: Failed to fetch RSS feed or feed is empty"
+            exit 1
+          fi
+          
+          # Create a directory to store notified releases if it doesn't exist
+          mkdir -p .github/notified-releases
+          NOTIFIED_FILE=".github/notified-releases/releases.txt"
+          
+          # Initialize the notified releases file if it doesn't exist
+          if [ ! -f "$NOTIFIED_FILE" ]; then
+            touch "$NOTIFIED_FILE"
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add "$NOTIFIED_FILE"
+            git commit -m "Initialize notified releases tracker" || true
+          fi
+          
+          # Configure git for potential commits
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          NEW_RELEASES_FOUND=false
+          
+          # Parse the RSS feed to extract release information
+          # Convert to single line per entry for easier parsing
+          echo "$RSS_CONTENT" | tr '\n' ' ' | sed 's/<entry>/\n<entry>/g' | grep '<entry>' | head -10 | while IFS= read -r entry; do
+            # Extract title (version)
+            TITLE=$(echo "$entry" | sed -n 's/.*<title>\([^<]*\)<\/title>.*/\1/p')
+            # Extract link (URL)
+            LINK=$(echo "$entry" | sed -n 's/.*<link href="\([^"]*\)".*/\1/p')
+            # Extract published date
+            DATE=$(echo "$entry" | sed -n 's/.*<published>\([^<]*\)<\/published>.*/\1/p')
+            
+            if [ -z "$TITLE" ]; then
+              continue
+            fi
+            
+            echo "Found release: $TITLE"
+            
+            # Check if this release has already been notified
+            if grep -Fxq "$TITLE" "$NOTIFIED_FILE"; then
+              echo "Release $TITLE already notified, skipping"
+              continue
+            fi
+            
+            echo "New release detected: $TITLE"
+            NEW_RELEASES_FOUND=true
+            
+            # Prepare issue title and body by replacing placeholders
+            ISSUE_TITLE="${ISSUE_TITLE_TEMPLATE//\{version\}/$TITLE}"
+            ISSUE_BODY="${ISSUE_BODY_TEMPLATE//\{version\}/$TITLE}"
+            ISSUE_BODY="${ISSUE_BODY//\{date\}/$DATE}"
+            ISSUE_BODY="${ISSUE_BODY//\{url\}/$LINK}"
+            
+            # Create GitHub issue
+            echo "Creating issue for release: $TITLE"
+            gh issue create \
+              --title "$ISSUE_TITLE" \
+              --body "$ISSUE_BODY" \
+              --label "$ISSUE_LABELS"
+            
+            # Add release to notified list
+            echo "$TITLE" >> "$NOTIFIED_FILE"
+            
+            # Commit the updated notified releases file
+            git add "$NOTIFIED_FILE"
+            git commit -m "Track notified release: $TITLE"
+          done
+          
+          # Push changes if there are any
+          if [ "$(git rev-list HEAD@{1}..HEAD --count 2>/dev/null || echo 0)" -gt 0 ] 2>/dev/null; then
+            git push
+            echo "Successfully notified new releases and updated tracker"
+          else
+            echo "No new releases to notify"
+          fi
