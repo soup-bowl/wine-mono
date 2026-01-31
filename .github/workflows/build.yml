@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - ".github/workflows/**"
+      - ".github/workflows/build.yml"
       - "Dockerfile"
   workflow_dispatch:
 
@@ -72,4 +72,5 @@ jobs:
             MONO_VERSION=${{ matrix.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
 
