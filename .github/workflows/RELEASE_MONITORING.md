@@ -63,6 +63,16 @@ ISSUE_LABELS: "enhancement,upstream-release"
 - Create them manually via Repository Settings → Labels
 - Run the setup script: `.github/scripts/setup-labels.sh` (requires `gh` CLI authentication)
 
+### Configuring Maximum Releases
+
+To prevent overwhelming the system if many releases accumulate, you can configure the maximum number of releases to process in a single run:
+
+```yaml
+MAX_RELEASES: "20"
+```
+
+This limits the workflow to processing the 20 most recent releases from the RSS feed. If more releases exist, they will be processed in subsequent runs.
+
 ## Manual Execution
 
 The workflow can be triggered manually via the Actions tab:

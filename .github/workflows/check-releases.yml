@@ -34,17 +34,23 @@ jobs:
             Please review and consider updating the Dockerfile to support this new version.
           # Configuration: Customize issue labels (comma-separated)
           ISSUE_LABELS: "enhancement,upstream-release"
+          # Configuration: Maximum number of releases to process in a single run
+          MAX_RELEASES: "20"
         run: |
           #!/bin/bash
           set -e
           
           echo "Fetching RSS feed from: $RSS_FEED_URL"
           
-          # Fetch the RSS feed
-          RSS_CONTENT=$(curl -sL "$RSS_FEED_URL")
+          # Fetch the RSS feed with error handling
+          if ! RSS_CONTENT=$(curl -sSL --fail "$RSS_FEED_URL" 2>&1); then
+            echo "Error: Failed to fetch RSS feed from $RSS_FEED_URL"
+            echo "Curl error: $RSS_CONTENT"
+            exit 1
+          fi
           
           if [ -z "$RSS_CONTENT" ]; then
-            echo "Error: Failed to fetch RSS feed or feed is empty"
+            echo "Error: RSS feed is empty"
             exit 1
           fi
           
@@ -75,8 +81,20 @@ jobs:
             # Extract published date
             DATE=$(echo "$entry" | sed -n 's/.*<published>\([^<]*\)<\/published>.*/\1/p')
             
+            # Validate that we successfully extracted required fields
             if [ -z "$TITLE" ]; then
+              echo "Warning: Skipping entry with missing title"
               continue
+            fi
+            
+            if [ -z "$LINK" ]; then
+              echo "Warning: Release $TITLE has no link, using placeholder"
+              LINK="(no link available)"
+            fi
+            
+            if [ -z "$DATE" ]; then
+              echo "Warning: Release $TITLE has no date, using placeholder"
+              DATE="(date not available)"
             fi
             
             echo "Found release: $TITLE"
@@ -91,7 +109,7 @@ jobs:
             
             # Save new release information to temp file
             echo "$TITLE|$LINK|$DATE" >> "$TEMP_RELEASES"
-          done < <(echo "$RSS_CONTENT" | tr '\n' ' ' | sed 's/<entry>/\n<entry>/g' | grep '<entry>' | head -10)
+          done < <(echo "$RSS_CONTENT" | tr '\n' ' ' | sed 's/<entry>/\n<entry>/g' | grep '<entry>' | head -n "$MAX_RELEASES")
           
           # Process new releases from temp file
           if [ -s "$TEMP_RELEASES" ]; then
@@ -116,7 +134,27 @@ jobs:
             # Commit and push the updated notified releases file
             git add "$NOTIFIED_FILE"
             git commit -m "Track notified releases: $(wc -l < "$TEMP_RELEASES") new release(s)"
-            git push
+            
+            # Push with retry logic
+            PUSH_RETRIES=3
+            PUSH_SUCCESS=false
+            for i in $(seq 1 $PUSH_RETRIES); do
+              if git push; then
+                PUSH_SUCCESS=true
+                break
+              else
+                echo "Push failed (attempt $i/$PUSH_RETRIES), retrying in 5 seconds..."
+                sleep 5
+                git pull --rebase
+              fi
+            done
+            
+            if [ "$PUSH_SUCCESS" = false ]; then
+              echo "Error: Failed to push changes after $PUSH_RETRIES attempts"
+              echo "Issues were created but tracking file was not updated"
+              echo "Manual intervention may be required to update .github/notified-releases/releases.txt"
+              exit 1
+            fi
             
             echo "Successfully notified $(wc -l < "$TEMP_RELEASES") new release(s) and updated tracker"
           else
